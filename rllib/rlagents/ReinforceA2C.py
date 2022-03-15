@@ -192,6 +192,10 @@ class BaseAgent(ABC):
 
     def compute_grad_variance(self, state_sampler, policy_handler, 
                               nTrajectoriesForGradVar, max_step, gamma):
+        grad_variance = {
+            "w_baseline": None,
+            "wo_baseline": None
+        }
         statesEST, actionsEST, rewardsEST, trajLensEST, logProbsEST = (
             self.simulator.SampleTrajectoriesFromStateSampler(
                 state_sampler, policy_handler,
@@ -233,41 +237,51 @@ class BaseAgent(ABC):
                 )
             ), dim=-1
         )
-        discountedSumsRewardsEST = torch.from_numpy(discountedSumsRewardsEST.astype("float32")) - baselinesEST
-        policyGoalsEST = torch.sum(torch.from_numpy(gammas[None, :]) * discountedSumsRewardsEST * logProbsTensorEST, 1)
+        discountedSumsRewardsEST_wo_baseline = torch.from_numpy(
+            discountedSumsRewardsEST.astype("float32")
+        )
+        discountedSumsRewardsEST_w_baseline = torch.from_numpy(discountedSumsRewardsEST.astype("float32")) - baselinesEST
 
-        autogradGrads = [
-            [
-                torch.autograd.grad(
-                    policyGoalsEST[k],
-                    self.policyNets[pId].parameters(),
-                    retain_graph=True,
-                    create_graph=False
-                )
-                for pId in np.arange(len(self.policyNets))
-            ]
-            for k in np.arange(self.nTrajectoriesForGradVar)
-        ]
-        autogradGrads = list(itertools.chain.from_iterable(autogradGrads))
+        for type_, reward_sum_discount in zip(
+                ["w_baseline", "wo_baseline"],
+                [discountedSumsRewardsEST_w_baseline, discountedSumsRewardsEST_wo_baseline]
+        ):
+            policyGoalsEST = torch.sum(torch.from_numpy(gammas[None, :]) * reward_sum_discount * logProbsTensorEST, 1)
 
-        rewardGradients = torch.cat(
-            [
-                torch.unsqueeze(
-                    torch.cat(
-                        [
-                            torch.flatten(grad)
-                            for grad in autogradGrads[k]
-                        ], 0
-                    ), 0
-                )
+            autogradGrads = [
+                [
+                    torch.autograd.grad(
+                        policyGoalsEST[k],
+                        self.policyNets[pId].parameters(),
+                        retain_graph=True,
+                        create_graph=False
+                    )
+                    for pId in np.arange(len(self.policyNets))
+                ]
                 for k in np.arange(self.nTrajectoriesForGradVar)
-            ], 0)
+            ]
+            autogradGrads = list(itertools.chain.from_iterable(autogradGrads))
 
-        valueGoalVar = torch.mean(torch.sum(rewardGradients * rewardGradients, 1))  # mean square norm, term1
-        valueGoalVar = valueGoalVar - torch.sum(torch.mean(rewardGradients, 0) ** 2)
-        valueGoalVar = valueGoalVar.detach()
+            rewardGradients = torch.cat(
+                [
+                    torch.unsqueeze(
+                        torch.cat(
+                            [
+                                torch.flatten(grad)
+                                for grad in autogradGrads[k]
+                            ], 0
+                        ), 0
+                    )
+                    for k in np.arange(self.nTrajectoriesForGradVar)
+                ], 0)
 
-        return meanRewardsGradVar, valueGoalVar.item()
+            valueGoalVar = torch.mean(torch.sum(rewardGradients * rewardGradients, 1))  # mean square norm, term1
+            valueGoalVar = valueGoalVar - torch.sum(torch.mean(rewardGradients, 0) ** 2)
+            valueGoalVar = valueGoalVar.detach()
+
+            grad_variance[type_] = valueGoalVar.item()
+
+        return meanRewardsGradVar, grad_variance["w_baseline"], grad_variance["wo_baseline"]
 
 
 class Reinforce(BaseAgent):
@@ -314,12 +328,12 @@ class Reinforce(BaseAgent):
         Returns:
             dict stats -- {"meanRewards": np.zeros([n_epochs]), "nSteps": np.zeros([n_epochs]),
                  "policyGoal": np.zeros([n_epochs]), "valueGoal": np.zeros([n_epochs]),
-                 "evalInfo": [], "evalFreq": 0, "GradientVariance": [], "meanRewardsGradVar": []}
+                 "evalInfo": [], "evalFreq": 0}
         """
         
         stats = {"meanRewards": np.zeros([n_epochs]), "nSteps": np.zeros([n_epochs]),
                  "policyGoal": np.zeros([n_epochs]), "valueGoal": np.zeros([n_epochs]),
-                 "evalInfo": [], "evalFreq": 0, "GradientVariance": [], "meanRewardsGradVar": []}
+                 "evalInfo": [], "evalFreq": 0}
 
         # definition of the optimizers
         policyOptimizers = [torch.optim.Adam(Net.parameters(), lr=lr) for Net in self.policyNets]
@@ -466,12 +480,14 @@ class ReinforceA2CBaseline(BaseAgent):
         Returns:
             dict stats -- {"meanRewards": np.zeros([n_epochs]), "nSteps": np.zeros([n_epochs]),
                  "policyGoal": np.zeros([n_epochs]), "valueGoal": np.zeros([n_epochs]),
-                 "evalInfo": [], "evalFreq": 0, "GradientVariance": [], "meanRewardsGradVar": []}
+                 "evalInfo": [], "evalFreq": 0, "GradientVariance_w_baseline": [],
+                 "GradientVariance_wo_baseline": [], "meanRewardsGradVar": []}
         """
 
         stats = {"meanRewards": np.zeros([n_epochs]), "nSteps": np.zeros([n_epochs]),
                  "policyGoal": np.zeros([n_epochs]), "valueGoal": np.zeros([n_epochs]),
-                 "evalInfo": [], "evalFreq": 0, "GradientVariance": [], "meanRewardsGradVar": []}
+                 "evalInfo": [], "evalFreq": 0, "GradientVariance_w_baseline": [],
+                 "GradientVariance_wo_baseline": [], "meanRewardsGradVar": []}
 
         # Definition of the optimizers
         policyOptimizers = [torch.optim.Adam(Net.parameters(), lr=lr) for Net in self.policyNets]
@@ -549,15 +565,16 @@ class ReinforceA2CBaseline(BaseAgent):
 
             if count_grad_variance != -1 and epochId % count_grad_variance == 0:
 
-                mean_rewards_grad_var, grad_var = self.compute_grad_variance(
+                mean_rewards_grad_var, grad_var_w_baseline, grad_var_wo_baseline = self.compute_grad_variance(
                     state_sampler=stateSampler,
                     policy_handler=policyHandler,
                     nTrajectoriesForGradVar=self.nTrajectoriesForGradVar,
                     max_step=max_step,
                     gamma=gamma
                 )
-                stats["meanRewardsGradVar"] = mean_rewards_grad_var
-                stats["GradientVariance"] = grad_var
+                stats["meanRewardsGradVar"].append(mean_rewards_grad_var)
+                stats["GradientVariance_w_baseline"].append(grad_var_w_baseline)
+                stats["GradientVariance_wo_baseline"].append(grad_var_wo_baseline)
 
             # Least squares goal
             valueGoal = -torch.tensor([2])*torch.mean(torch.sum(baselines*discountedSumsRewards, 1))
@@ -658,12 +675,14 @@ class ReinforceEVBaseline(BaseAgent):
         Returns:
             dict stats -- {"meanRewards": np.zeros([n_epochs]), "nSteps": np.zeros([n_epochs]),
                  "policyGoal": np.zeros([n_epochs]), "valueGoal": np.zeros([n_epochs]),
-                 "evalInfo": [], "evalFreq": 0, "GradientVariance": [], "meanRewardsGradVar": []}
+                 "evalInfo": [], "evalFreq": 0, "GradientVariance_w_baseline": [],
+                  "GradientVariance_wo_baseline": [], "meanRewardsGradVar": []}
         """
 
         stats = {"meanRewards": np.zeros([n_epochs]), "nSteps": np.zeros([n_epochs]),
                  "policyGoal": np.zeros([n_epochs]), "valueGoal": np.zeros([n_epochs]),
-                 "evalInfo": [], "evalFreq": 0, "GradientVariance": [], "meanRewardsGradVar": []}
+                 "evalInfo": [], "evalFreq": 0, "GradientVariance_w_baseline": [],
+                 "GradientVariance_wo_baseline": [], "meanRewardsGradVar": []}
 
         # Definition of the optimizers
         policyOptimizers = [torch.optim.Adam(Net.parameters(), lr=lr) for Net in self.policyNets]
@@ -767,15 +786,16 @@ class ReinforceEVBaseline(BaseAgent):
             
             if count_grad_variance != -1 and epochId % count_grad_variance == 0:
 
-                mean_rewards_grad_var, grad_var = self.compute_grad_variance(
+                mean_rewards_grad_var, grad_var_w_baseline, grad_var_wo_baseline = self.compute_grad_variance(
                     state_sampler=stateSampler,
                     policy_handler=policyHandler,
                     nTrajectoriesForGradVar=self.nTrajectoriesForGradVar,
                     max_step=max_step,
                     gamma=gamma
                 )
-                stats["meanRewardsGradVar"] = mean_rewards_grad_var
-                stats["GradientVariance"] = grad_var
+                stats["meanRewardsGradVar"].append(mean_rewards_grad_var)
+                stats["GradientVariance_w_baseline"].append(grad_var_w_baseline)
+                stats["GradientVariance_wo_baseline"].append(grad_var_wo_baseline)
 
             # value step
             valueGoal.to(self.device).backward(retain_graph=True)
