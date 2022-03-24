@@ -1,4 +1,5 @@
 import rllib.simulators.pythonSimulators as pysim
+import rllib.rlagents.ReinforceA2C as ReinforceA2C
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -7,13 +8,54 @@ import gym
 """config7. Deeper net for baseline"""
 
 lr = 1e-3
-envName="CartPole-v1"
+envName = "CartPole-v1"
 env = gym.make(envName)
 simulator = pysim.GymSimulator(env)
 
-nRuns=2
-nEpochs=5000
-nTraj=2
+nRuns = 2
+nEpochs = 5000
+max_step = 1000
+nTraj = 2
+nTrajForGradVar = 50
+count_grad_var = 200
+entropy_const = 0
+step_size = 50
+gamma = 0.99
+
+baselineLoss = "var"
+eval_per_epochs = 200
+
+folderPrefix = "./CartPoleData/"
+
+
+def evaluation_Reinforce(current_agent):
+    env_eval = gym.make(envName)
+    simulator_eval = pysim.GymSimulator(env_eval)
+    agent_eval = ReinforceA2C.Reinforce(current_agent.policyNets, simulator_eval, n_trajectories=2)
+
+    stats = agent_eval.evaluate(n_samples=5, max_step=3000)
+    return stats
+
+
+def evaluation_A2C(current_agent):
+    env_eval = gym.make(envName)
+    simulator_eval = pysim.GymSimulator(env_eval)
+    agent_eval = ReinforceA2C.ReinforceA2CBaseline(current_agent.policyNets, current_agent.valueNet,
+                                                   simulator_eval, n_trajectories=2)
+
+    stats = agent_eval.evaluate(n_samples=5, max_step=3000)
+    return stats
+
+
+def evaluation_EV(current_agent):
+    env_eval = gym.make(envName)
+    simulator_eval = pysim.GymSimulator(env_eval)
+    agent_eval = ReinforceA2C.ReinforceEVBaseline(current_agent.policyNets, current_agent.valueNet,
+                                                  simulator_eval, n_trajectories=2, baseline_loss="var")
+
+    stats = agent_eval.evaluate(n_samples=5, max_step=3000)
+    return stats
+
 
 class Mish(nn.Module):
     def __init__(self):
@@ -21,6 +63,7 @@ class Mish(nn.Module):
 
     def forward(self, x):
         return x*(torch.tanh(F.softplus(x)))
+
 
 class PolicyValuePair:
     def __init__(self):
@@ -54,6 +97,14 @@ class PolicyValuePair:
                 value = self.linear3(value)
                 return value
             
-        self.valueNet = nn.Sequential(nn.Linear(simulator.stateSpaceShape[0], 128), Mish(), nn.Linear(128, 256), Mish(), nn.Linear(256, 128), Mish(), nn.Linear(128, 1))
+        self.valueNet = nn.Sequential(
+            nn.Linear(simulator.stateSpaceShape[0], 128),
+            Mish(),
+            nn.Linear(128, 256),
+            Mish(),
+            nn.Linear(256, 128),
+            Mish(),
+            nn.Linear(128, 1)
+        )
         
         self.valueNetStAct = ValueNetwork(simulator.stateSpaceShape[0], simulator.actionSpaceN+1, 128)

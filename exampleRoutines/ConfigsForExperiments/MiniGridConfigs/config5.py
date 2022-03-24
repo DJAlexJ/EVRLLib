@@ -1,14 +1,11 @@
 import rllib.simulators.pythonSimulators as pysim
 import rllib.rlagents.ReinforceA2C as ReinforceA2C
-import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import gym
 from gym_minigrid.wrappers import *
 
 
 lr = 3e-4
-envName="MiniGrid-Unlock-v0"
+envName = "MiniGrid-Unlock-v0"
 env = gym.make(envName, seed=2021)
 env = FlatObsWrapper(env)
 simulator = pysim.GymSimulator(env)
