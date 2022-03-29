@@ -6,19 +6,11 @@ os.environ["VECLIB_MAXIMUM_THREADS"] = "1"  # export VECLIB_MAXIMUM_THREADS=1
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 import rllib.rlagents.ReinforceA2C as srlagents
-import rllib.simulators.pythonSimulators as pysim
-import numpy as np
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 import argparse
 import importlib
 import time
-import tqdm
 import pickle
 
-import os
-import gym
 from gym_minigrid.wrappers import *
 
 parser = argparse.ArgumentParser()
@@ -29,7 +21,7 @@ args = parser.parse_args()
 config = importlib.import_module(args.config_path)
 config_name = args.config_path.rsplit('.')[-1]
 
-#set environment
+# set environment
 envName = config.envName
 env = config.env
 simulator = config.simulator
@@ -62,12 +54,12 @@ for runId in np.arange(nRuns):
     polval = config.PolicyValuePair()
     policyNets = polval.policyNet
     valueNet = polval.valueNet
-    agent = srlagents.Reinforce(policyNets, simulator, n_trajectories=nTraj, nTrajectoriesForGradVar=nTrajForGradVar)
+    agent = srlagents.Reinforce(policyNets, simulator, n_trajectories=nTraj)
 
     time0 = time.time()
     logs = agent.train(n_epochs=nEpochs, lr=lr, max_step=max_step, eval_func=evaluation_Reinforce,
                        step_size=step_size, gamma=gamma, entropy_const=entropy_const,
-                       eval_per_epochs=eval_per_epochs, count_grad_variance=count_grad_var)
+                       eval_per_epochs=eval_per_epochs)
     timesReinf[runId] = time.time()-time0
     logsReinf[runId, :] = logs['meanRewards']
     evalReinf[runId, :] = list(map(lambda x: x['rewardMean'], logs['evalInfo']))
