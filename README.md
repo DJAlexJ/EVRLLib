@@ -4,12 +4,12 @@ The library contains two packages: simulators (contains routines for sampling tr
 
 ## Implemented
 
-1.Reinforce
-2.Reinforce with state-dependent baselines  
-    a. A2C
-    b. EV (Empirical Variance Minimization)
-        - EVv (variance)
-        - EVm (2nd moment)
+1. Reinforce
+2. Reinforce with state-dependent baselines  
+    1. A2C
+    2. EV (Empirical Variance Minimization)
+        1. EVv (variance)
+        2. EVm (2nd moment)
 
 ## Requirements
 ```
