@@ -1,5 +1,7 @@
 ## Structure
 
+EVRLLib is a library implementing policy gradient algorithms in Reinforcement Learning.
+
 The library contains two packages: simulators (contains routines for sampling trajectories from environments and simulators) and RLAgents (all the implementations of RL Agents are located there).
 
 ## Implemented
