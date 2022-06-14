@@ -16,7 +16,10 @@ The library contains two packages: simulators (contains routines for sampling tr
 torch >= 1.7.1
 numpy >= 1.17.2
 gym >= 0.18.0
-gym-minigrid >= 1.0.2 if you are planning to work with Minigrid environments (supported by GymSimulators since they have gym-like interface)
+```
+if you are planning to work with Minigrid environments (supported by GymSimulators since they have gym-like interface), then
+```
+gym-minigrid >= 1.0.2
 ```
 
 ## Installation
